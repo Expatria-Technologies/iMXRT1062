@@ -29,7 +29,7 @@
 #include "uart.h"
 #include "driver.h"
 #include "grbl/protocol.h"
-#include "grbl/limits.h"
+#include "grbl/machine_limits.h"
 #include "grbl/state_machine.h"
 
 #ifdef I2C_PORT
@@ -53,6 +53,11 @@
 #if SDCARD_ENABLE
 #include "uSDFS.h"
 #include "sdcard/sdcard.h"
+#endif
+
+#if LITTLEFS_ENABLE
+#include "littlefs_hal.h"
+#include "sdcard/fs_littlefs.h"
 #endif
 
 #if PPI_ENABLE
@@ -512,7 +517,7 @@ static volatile bool ms_event = false;
 #else
 #define ADD_MSEVENT 0
 #endif
-static bool IOInitDone = false;
+static bool IOInitDone = false, rtc_started = false;
 static uint16_t pulse_length, pulse_delay;
 static axes_signals_t next_step_outbits;
 static delay_t grbl_delay = { .ms = 0, .callback = NULL };
@@ -1729,7 +1734,7 @@ static void settings_changed (settings_t *settings)
     }
 }
 
-static void enumeratePins (bool low_level, pin_info_ptr pin_info)
+static void enumeratePins (bool low_level, pin_info_ptr pin_info, void *data)
 {
     static xbar_t pin = {0};
     uint32_t i;
@@ -1743,7 +1748,7 @@ static void enumeratePins (bool low_level, pin_info_ptr pin_info)
         pin.mode.pwm = pin.group == PinGroup_SpindlePWM;
         pin.description = inputpin[i].description;
 
-        pin_info(&pin);
+        pin_info(&pin, data);
     };
 
     pin.mode.mask = 0;
@@ -1755,7 +1760,7 @@ static void enumeratePins (bool low_level, pin_info_ptr pin_info)
         pin.group = outputpin[i].group;
         pin.description = outputpin[i].description;
 
-        pin_info(&pin);
+        pin_info(&pin, data);
     };
 
     periph_signal_t *ppin = periph_pins;
@@ -1766,11 +1771,10 @@ static void enumeratePins (bool low_level, pin_info_ptr pin_info)
         pin.group = ppin->pin.group;
         pin.description = ppin->pin.description;
 
-        pin_info(&pin);
+        pin_info(&pin, data);
 
         ppin = ppin->next;
     } while(ppin);
-
 }
 
 void registerPeriphPin (const periph_pin_t *pin)
@@ -2120,6 +2124,10 @@ static bool driver_setup (settings_t *settings)
     card->on_unmount = sdcard_unmount;
 #endif
 
+#if LITTLEFS_ENABLE
+    fs_littlefs_mount("/littlefs", t4_littlefs_hal());
+#endif
+
 #if ETHERNET_ENABLE
     grbl_enet_start();
 #endif
@@ -2199,6 +2207,37 @@ static void reboot (void)
     SCB_AIRCR = 0x05FA0004;
 }
 
+static bool set_rtc_time (struct tm *time)
+{
+    rtc_started = true;
+
+    time_t t = mktime(time);
+
+    rtc_set(t);
+
+    return true;
+}
+
+static bool get_rtc_time (struct tm *time)
+{
+    if(rtc_started) {
+        time_t t = rtc_get();
+        struct tm *dt = gmtime(&t);
+        memcpy(time, dt, sizeof(struct tm));
+    }
+
+    return rtc_started;
+}
+
+// https://forum.pjrc.com/threads/33443-How-to-display-free-ram?highlight=free+memory
+extern char _heap_end[], *__brkval;
+
+// This should ideall return sum of all free blocks on the heap...
+uint32_t get_free_mem (void)
+{
+    return _heap_end - __brkval;
+}
+
 // Initialize HAL pointers, setup serial comms and enable EEPROM.
 // NOTE: Grbl is not yet configured (from EEPROM data), driver_setup() will be called when done.
 bool driver_init (void)
@@ -2243,14 +2282,16 @@ bool driver_init (void)
         options[strlen(options) - 1] = '\0';
 
     hal.info = "iMXRT1062";
-    hal.driver_version = "220710";
+    hal.driver_version = "220914";
 #ifdef BOARD_NAME
     hal.board = BOARD_NAME;
 #endif
     hal.driver_options = *options == '\0' ? NULL : options;
     hal.driver_setup = driver_setup;
+    hal.f_mcu = F_CPU_ACTUAL / 1000000UL;
     hal.f_step_timer = 24000000;
     hal.rx_buffer_size = RX_BUFFER_SIZE;
+    hal.get_free_mem = get_free_mem;
     hal.delay_ms = driver_delay_ms;
     hal.settings_changed = settings_changed;
 
@@ -2292,6 +2333,13 @@ bool driver_init (void)
     hal.periph_port.register_pin = registerPeriphPin;
     hal.periph_port.set_pin_description = setPeriphPinDescription;
 
+    hal.rtc.get_datetime = get_rtc_time;
+    hal.rtc.set_datetime = set_rtc_time;
+
+#if ADD_MSEVENT
+    grbl.on_execute_realtime = execute_realtime;
+#endif
+
 #if USB_SERIAL_CDC
     const io_stream_t *st = usb_serialInit();
     stream_connect(st);
@@ -2310,10 +2358,6 @@ bool driver_init (void)
     hal.nvs.type = NVS_Flash;
     hal.nvs.memcpy_from_flash = nvsRead;
     hal.nvs.memcpy_to_flash = nvsWrite;
-#endif
-
-#if ADD_MSEVENT
-    grbl.on_execute_realtime = execute_realtime;
 #endif
 
 #if QEI_ENABLE
@@ -2438,7 +2482,7 @@ bool driver_init (void)
 
     // No need to move version check before init.
     // Compiler will fail any signature mismatch for existing entries.
-    return hal.version == 9;
+    return hal.version == 10;
 }
 
 /* interrupt handlers */

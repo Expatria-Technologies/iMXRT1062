@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2020-2021 Terje Io
+  Copyright (c) 2020-2022 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -47,7 +47,7 @@ static network_settings_t ethernet, network;
 static on_report_options_ptr on_report_options;
 static on_execute_realtime_ptr on_execute_realtime;
 static on_stream_changed_ptr on_stream_changed;
-static char netservices[40] = ""; // must be large enough to hold all service names
+static char netservices[NETWORK_SERVICES_LEN] = "";
 
 static void report_options (bool newopt)
 {
@@ -58,6 +58,10 @@ static void report_options (bool newopt)
 #if FTP_ENABLE
         if(services.ftp)
         	hal.stream.write(",FTP");
+#endif
+#if WEBDAV_ENABLE
+        if(services.webdav)
+            hal.stream.write(",WebDAV");
 #endif
     } else {
         hal.stream.write("[IP:");
@@ -70,6 +74,39 @@ static void report_options (bool newopt)
             hal.stream.write("]" ASCII_EOL);
         }
     }
+}
+
+network_info_t *networking_get_info (void)
+{
+    static network_info_t info;
+
+    memcpy(&info.status, &network, sizeof(network_settings_t));
+
+    strcpy(info.status.ip, IPAddress);
+
+    if(info.status.ip_mode == IpMode_DHCP) {
+        *info.status.gateway = '\0';
+        *info.status.mask = '\0';
+    }
+
+    info.is_ethernet = true;
+    info.link_up = linkUp;
+    info.mbps = 100;
+    info.status.services = services;
+
+    struct netif *netif = netif_default; // netif_get_by_index(0);
+
+    if(netif) {
+
+        if(linkUp) {
+            ip4addr_ntoa_r(netif_ip_gw4(netif), info.status.gateway, IP4ADDR_STRLEN_MAX);
+            ip4addr_ntoa_r(netif_ip_netmask4(netif), info.status.mask, IP4ADDR_STRLEN_MAX);
+        }
+
+        sprintf(info.mac, "%02X:%02X:%02X:%02X:%02X:%02X", netif->hwaddr[0], netif->hwaddr[1], netif->hwaddr[2], netif->hwaddr[3], netif->hwaddr[4], netif->hwaddr[5]);
+    }
+
+    return &info;
 }
 
 static void link_status_callback (struct netif *netif)
@@ -99,8 +136,13 @@ static void netif_status_callback (struct netif *netif)
 #endif
 
 #if HTTP_ENABLE
-    if(network.services.http && !services.http)
+    if(network.services.http && !services.http) {
         services.http = httpd_init(network.http_port == 0 ? NETWORK_HTTP_PORT : network.http_port);
+  #if WEBDAV_ENABLE
+          if(network.services.webdav && !services.webdav)
+              services.webdav = webdav_init();
+  #endif
+      }
 #endif
 
 #if WEBSOCKET_ENABLE
@@ -191,39 +233,39 @@ static const setting_group_detail_t ethernet_groups [] = {
 };
 
 PROGMEM static const setting_detail_t ethernet_settings[] = {
-    { Setting_NetworkServices, Group_Networking, "Network Services", NULL, Format_Bitfield, netservices, NULL, NULL, Setting_NonCoreFn, ethernet_set_services, ethernet_get_services, NULL },
-    { Setting_Hostname, Group_Networking, "Hostname", NULL, Format_String, "x(64)", NULL, "64", Setting_NonCore, ethernet.hostname, NULL, NULL },
-    { Setting_IpMode, Group_Networking, "IP Mode", NULL, Format_RadioButtons, "Static,DHCP,AutoIP", NULL, NULL, Setting_NonCore, &ethernet.ip_mode, NULL, NULL },
-    { Setting_IpAddress, Group_Networking, "IP Address", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, ethernet_set_ip, ethernet_get_ip, NULL },
-    { Setting_Gateway, Group_Networking, "Gateway", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, ethernet_set_ip, ethernet_get_ip, NULL },
-    { Setting_NetMask, Group_Networking, "Netmask", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, ethernet_set_ip, ethernet_get_ip, NULL },
-    { Setting_TelnetPort, Group_Networking, "Telnet port", NULL, Format_Int16, "####0", "1", "65535", Setting_NonCore, &ethernet.telnet_port, NULL, NULL },
+    { Setting_NetworkServices, Group_Networking, "Network Services", NULL, Format_Bitfield, netservices, NULL, NULL, Setting_NonCoreFn, ethernet_set_services, ethernet_get_services, NULL, true },
+    { Setting_Hostname, Group_Networking, "Hostname", NULL, Format_String, "x(64)", NULL, "64", Setting_NonCore, ethernet.hostname, NULL, NULL, true },
+    { Setting_IpMode, Group_Networking, "IP Mode", NULL, Format_RadioButtons, "Static,DHCP,AutoIP", NULL, NULL, Setting_NonCore, &ethernet.ip_mode, NULL, NULL, true },
+    { Setting_IpAddress, Group_Networking, "IP Address", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, ethernet_set_ip, ethernet_get_ip, NULL, true },
+    { Setting_Gateway, Group_Networking, "Gateway", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, ethernet_set_ip, ethernet_get_ip, NULL, true },
+    { Setting_NetMask, Group_Networking, "Netmask", NULL, Format_IPv4, NULL, NULL, NULL, Setting_NonCoreFn, ethernet_set_ip, ethernet_get_ip, NULL, true },
+    { Setting_TelnetPort, Group_Networking, "Telnet port", NULL, Format_Int16, "####0", "1", "65535", Setting_NonCore, &ethernet.telnet_port, NULL, NULL, true },
 #if FTP_ENABLE
-    { Setting_FtpPort, Group_Networking, "FTP port", NULL, Format_Int16, "####0", "1", "65535", Setting_NonCore, &ethernet.ftp_port, NULL, NULL },
+    { Setting_FtpPort, Group_Networking, "FTP port", NULL, Format_Int16, "####0", "1", "65535", Setting_NonCore, &ethernet.ftp_port, NULL, NULL, true },
 #endif
 #if HTTP_ENABLE
-    { Setting_HttpPort, Group_Networking, "HTTP port", NULL, Format_Int16, "####0", "1", "65535", Setting_NonCore, &ethernet.http_port, NULL, NULL },
+    { Setting_HttpPort, Group_Networking, "HTTP port", NULL, Format_Int16, "####0", "1", "65535", Setting_NonCore, &ethernet.http_port, NULL, NULL, true },
 #endif
-    { Setting_WebSocketPort, Group_Networking, "Websocket port", NULL, Format_Int16, "####0", "1", "65535", Setting_NonCore, &ethernet.websocket_port, NULL, NULL }
+    { Setting_WebSocketPort, Group_Networking, "Websocket port", NULL, Format_Int16, "####0", "1", "65535", Setting_NonCore, &ethernet.websocket_port, NULL, NULL, true }
 };
 
 #ifndef NO_SETTINGS_DESCRIPTIONS
 
 static const setting_descr_t ethernet_settings_descr[] = {
-    { Setting_NetworkServices, "Network services to enable. Consult driver documentation for availability." SETTINGS_HARD_RESET_REQUIRED },
-    { Setting_Hostname, "Network hostname." SETTINGS_HARD_RESET_REQUIRED },
-    { Setting_IpMode, "IP Mode." SETTINGS_HARD_RESET_REQUIRED },
-    { Setting_IpAddress, "Static IP address." SETTINGS_HARD_RESET_REQUIRED },
-    { Setting_Gateway, "Static gateway address." SETTINGS_HARD_RESET_REQUIRED },
-    { Setting_NetMask, "Static netmask." SETTINGS_HARD_RESET_REQUIRED },
-    { Setting_TelnetPort, "(Raw) Telnet port number listening for incoming connections." SETTINGS_HARD_RESET_REQUIRED },
+    { Setting_NetworkServices, "Network services to enable. Consult driver documentation for availability." },
+    { Setting_Hostname, "Network hostname." },
+    { Setting_IpMode, "IP Mode." },
+    { Setting_IpAddress, "Static IP address." },
+    { Setting_Gateway, "Static gateway address." },
+    { Setting_NetMask, "Static netmask." },
+    { Setting_TelnetPort, "(Raw) Telnet port number listening for incoming connections." },
 #if FTP_ENABLE
-    { Setting_FtpPort, "FTP port number listening for incoming connections." SETTINGS_HARD_RESET_REQUIRED },
+    { Setting_FtpPort, "FTP port number listening for incoming connections." },
 #endif
 #if HTTP_ENABLE
-    { Setting_HttpPort, "HTTP port number listening for incoming connections." SETTINGS_HARD_RESET_REQUIRED },
+    { Setting_HttpPort, "HTTP port number listening for incoming connections." },
 #endif
-    { Setting_WebSocketPort, "Websocket port number listening for incoming connections." SETTINGS_HARD_RESET_REQUIRED
+    { Setting_WebSocketPort, "Websocket port number listening for incoming connections."
                              "\\n\\nNOTE: WebUI requires this to be HTTP port number + 1."
     }
 };
