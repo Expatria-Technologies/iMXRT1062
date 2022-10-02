@@ -479,9 +479,9 @@ static output_signal_t outputpin[] = {
     { .id = Output_SpindleDir,      .port = &spindleDir,    .pin = SPINDLE_DIRECTION_PIN,   .group = PinGroup_SpindleControl },
 #endif
 #endif // PWM_SPINDLE
-    { .id = Output_CoolantFlood,    .port = &Mist,          .pin = COOLANT_FLOOD_PIN,       .group = PinGroup_Coolant },
+    { .id = Output_CoolantFlood,    .port = &Flood,         .pin = COOLANT_FLOOD_PIN,       .group = PinGroup_Coolant },
 #ifdef COOLANT_MIST_PIN
-    { .id = Output_CoolantMist,     .port = &Flood,         .pin = COOLANT_MIST_PIN,        .group = PinGroup_Coolant },
+    { .id = Output_CoolantMist,     .port = &Mist,          .pin = COOLANT_MIST_PIN,        .group = PinGroup_Coolant },
 #endif
 #ifdef AUXOUTPUT0_PIN
     { .id = Output_Aux0,            .port = &AuxOut0,       .pin = AUXOUTPUT0_PIN,          .group = PinGroup_AuxOutput },
@@ -1313,7 +1313,7 @@ bool spindleConfig (void)
     hal.spindle.cap.at_speed = hal.spindle.get_data == spindleGetData;
 #endif
 
-    spindle_update_caps(hal.spindle.cap.variable);
+    spindle_update_caps(hal.spindle.cap.variable ? &spindle_pwm : NULL);
 
     return true;
 }
@@ -2282,7 +2282,7 @@ bool driver_init (void)
         options[strlen(options) - 1] = '\0';
 
     hal.info = "iMXRT1062";
-    hal.driver_version = "220914";
+    hal.driver_version = "220927";
 #ifdef BOARD_NAME
     hal.board = BOARD_NAME;
 #endif
