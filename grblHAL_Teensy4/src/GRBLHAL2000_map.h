@@ -42,6 +42,8 @@
 #error Quadrature encoder and spindle sync cannot be enabled at the same time
 #endif
 
+#define N_SPINDLE 8
+
 #define X_STEP_PIN          (2u)
 #define X_DIRECTION_PIN     (3u)
 #define X_ENABLE_PIN        (10u)
