@@ -128,8 +128,8 @@
 #define AUXOUTPUT2_PIN      (33u)
 #define AUXOUTPUT3_PIN      (38u)
 #if !DRIVER_SPINDLE_ENABLE
-#define AUXOUTPUT3_PIN      (12u)
-#define AUXOUTPUT4_PIN      (11u)
+#define AUXOUTPUT4_PIN      (12u)
+#define AUXOUTPUT5_PIN      (11u)
 #endif
 
 #if I2C_STROBE_ENABLE

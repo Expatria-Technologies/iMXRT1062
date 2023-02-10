@@ -28,24 +28,24 @@
 //#define BOARD_T41U5XBB_SS // For a modified T41U5XBB board, allows spindle sync to be enabled.
 //#define BOARD_T41BB5X_PRO
 //#define BOARD_CNC_BOOSTERPACK
-//#define BOARD_GRBLHAL2000
+#define BOARD_GRBLHAL2000
 //#define BOARD_MY_MACHINE // Add my_machine_map.h before enabling this!
 //#define BAUD_RATE 230400
 // Configuration
 // Uncomment to enable, for some a value > 1 may be assigned, if so the default value is shown.
 
 /*
-              Plugin: | ETHERNET¹ | SDCARD¹ | KEYPAD | EEPROM | N_AXIS |
+              Plugin: | ETHERNETï¿½ | SDCARDï¿½ | KEYPAD | EEPROM | N_AXIS |
 ----------------------|-----------|---------|--------|--------|--------|
-BOARD_T40X101         | no        | no      | yes    | yes³   | max 4  |
-BOARD_T41U5XBB        | yes       | yes     | yes    | yes³   | max 5  |
+BOARD_T40X101         | no        | no      | yes    | yesï¿½   | max 4  |
+BOARD_T41U5XBB        | yes       | yes     | yes    | yesï¿½   | max 5  |
 BOARD_T41BB5X_PRO     | yes       | yes     | yes    | yes    | max 5  |
-BOARD_CNC_BOOSTERPACK | yes²      | yes     | yes    | yes    | max 3  |
+BOARD_CNC_BOOSTERPACK | yesï¿½      | yes     | yes    | yes    | max 3  |
 BOARD_GRBLHAL2000     | yes       | yes     | yes    | yes    | max 5  |
 
-¹ Teensy 4.1 only
-² External magjack.
-³ EEPROM is optional and must be added to the board.
+ï¿½ Teensy 4.1 only
+ï¿½ External magjack.
+ï¿½ EEPROM is optional and must be added to the board.
 
 N_AXIS has a default value of 3, edit grbl\config.h to increase.
 
@@ -67,7 +67,7 @@ N_AXIS has a default value of 3, edit grbl\config.h to increase.
 //#define MPG_ENABLE           1 // Enable MPG interface. Requires serial port and one handshake pin unless
                                  // KEYPAD_ENABLE is set to 2 when mode switching is done by the CMD_MPG_MODE_TOGGLE (0x8B)
                                  // command character. Set both MPG_ENABLE and KEYPAD_ENABLE to 2 to use a handshake pin anyway.
-//#define KEYPAD_ENABLE        1 // Set to 1 for I2C keypad, 2 for other input such as serial data. If KEYPAD_ENABLE is set to 2
+#define KEYPAD_ENABLE        1 // Set to 1 for I2C keypad, 2 for other input such as serial data. If KEYPAD_ENABLE is set to 2
                                  // and MPG_ENABLE is uncommented then a serial stream is shared with the MPG.
 //#define PLASMA_ENABLE        1 // Plasma/THC plugin. To be completed.
 //#define MCP3221_ENABLE       1 // Enable analog input via MCP3221 ADC.
@@ -83,6 +83,7 @@ N_AXIS has a default value of 3, edit grbl\config.h to increase.
                                  // Currently only available for BOARD_T41BB5X_PRO and BOARD_T41U5XBB_SS.
 //#define ESTOP_ENABLE         0 // When enabled only real-time report requests will be executed when the reset pin is asserted.
                                  // Note: if left commented out the default setting is determined from COMPATIBILITY_LEVEL.
+#define STATUS_LIGHT_ENABLE 1
 
 // If the selected board map supports more than three motors ganging and/or auto-squaring
 // of axes can be enabled here.
