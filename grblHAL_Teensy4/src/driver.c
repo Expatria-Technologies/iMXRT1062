@@ -3,7 +3,7 @@
 
   Part of grblHAL
 
-  Copyright (c) 2020-2022 Terje Io
+  Copyright (c) 2020-2023 Terje Io
 
   Grbl is free software: you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -122,21 +122,27 @@ static gpio_t Reset, FeedHold, CycleStart, Probe, LimitX, LimitY, LimitZ;
 // Standard outputs
 static gpio_t Mist, Flood, stepX, stepY, stepZ, dirX, dirY, dirZ;
 
-#if (!VFD_SPINDLE || N_SPINDLE > 1) && defined(SPINDLE_ENABLE_PIN)
+#if DRIVER_SPINDLE_ENABLE && defined(SPINDLE_ENABLE_PIN)
 
-#define PWM_SPINDLE
+#define DRIVER_SPINDLE
 
 #if PLASMA_ENABLE && defined(SPINDLE_PWM_PIN)
 #undef SPINDLE_PWM_PIN
 #endif
 
+#if SPINDLE_SYNC_ENABLE && !defined(SPINDLE_PWM_PIN)
+#undef SPINDLE_SYNC_ENABLE
+#endif
+
 static gpio_t spindleEnable, spindleDir;
+
+#ifdef SPINDLE_PWM_PIN
 static bool pwmEnabled = false;
 static spindle_pwm_t spindle_pwm;
-
 static void spindle_set_speed (uint_fast16_t pwm_value);
-
 #endif
+
+#endif // DRIVER_SPINDLE
 
 // Optional I/O
 #ifdef SAFETY_DOOR_PIN
@@ -473,12 +479,12 @@ static output_signal_t outputpin[] = {
     { .id = Output_StepperEnableZ,  .port = &enableZ2,      .pin = Z2_ENABLE_PIN,           .group = PinGroup_StepperEnable },
 #endif
 #endif
-#ifdef PWM_SPINDLE
+#ifdef DRIVER_SPINDLE
     { .id = Output_SpindleOn,       .port = &spindleEnable, .pin = SPINDLE_ENABLE_PIN,      .group = PinGroup_SpindleControl },
 #ifdef SPINDLE_DIRECTION_PIN
     { .id = Output_SpindleDir,      .port = &spindleDir,    .pin = SPINDLE_DIRECTION_PIN,   .group = PinGroup_SpindleControl },
 #endif
-#endif // PWM_SPINDLE
+#endif // DRIVER_SPINDLE
     { .id = Output_CoolantFlood,    .port = &Flood,         .pin = COOLANT_FLOOD_PIN,       .group = PinGroup_Coolant },
 #ifdef COOLANT_MIST_PIN
     { .id = Output_CoolantMist,     .port = &Mist,          .pin = COOLANT_MIST_PIN,        .group = PinGroup_Coolant },
@@ -1126,7 +1132,7 @@ probe_state_t probeGetState (void)
     return state;
 }
 
-#ifdef PWM_SPINDLE
+#ifdef DRIVER_SPINDLE
 
 // Static spindle (off, on cw & on ccw)
 
@@ -1164,6 +1170,8 @@ static void spindleSetState (spindle_state_t state, float rpm)
 }
 
 // Variable spindle control functions
+
+#ifdef SPINDLE_PWM_PIN
 
 // Set spindle speed.
 static void spindle_set_speed (uint_fast16_t pwm_value)
@@ -1243,28 +1251,45 @@ static void spindleSetStateVariable (spindle_state_t state, float rpm)
 #endif
 }
 
-// Returns spindle state in a spindle_state_t variable.
-// spindle_state_t is defined in grbl/spindle_control.h
-static spindle_state_t spindleGetState (void)
+bool spindleConfig (void)
 {
-    spindle_state_t state = {settings.spindle.invert.mask};
+    static spindle_settings_t spindle = {0};
 
-    state.on = (spindleEnable.reg->DR & spindleEnable.bit) != 0;
-#ifdef SPINDLE_DIRECTION_PIN
-    state.ccw = (spindleDir.reg->DR & spindleDir.bit) != 0;
-#endif
+    if(hal.spindle.rpm_max > 0.0f && memcmp(&spindle, &settings.spindle, sizeof(spindle_settings_t))) {
 
-    state.value ^= settings.spindle.invert.mask;
+        memcpy(&spindle, &settings.spindle, sizeof(spindle_settings_t));
 
-    if(pwmEnabled)
-        state.on |= pwmEnabled;
+        if((hal.spindle.cap.variable = !settings.spindle.flags.pwm_disable && spindle_precompute_pwm_values(&spindle_pwm, F_BUS_ACTUAL / 2))) {
+    #if SPINDLE_PWM_PIN == 12
+            TMR1_COMP11 = spindle_pwm.period;
+            TMR1_CMPLD11 = spindle_pwm.period;
+            if(settings.spindle.invert.pwm)
+                TMR1_SCTRL0 |= TMR_SCTRL_OPS;
+            else
+                TMR1_SCTRL0 &= ~TMR_SCTRL_OPS;
+    #else // 13
+            TMR2_COMP10 = spindle_pwm.period;
+            TMR2_CMPLD10 = spindle_pwm.period;
+            if(settings.spindle.invert.pwm)
+                TMR2_SCTRL0 |= TMR_SCTRL_OPS;
+            else
+                TMR2_SCTRL0 &= ~TMR_SCTRL_OPS;
+    #endif
+            hal.spindle.set_state = spindleSetStateVariable;
+        } else {
+            if(pwmEnabled)
+                hal.spindle.set_state((spindle_state_t){0}, 0.0f);
+            hal.spindle.set_state = spindleSetState;
+        }
+    }
 
 #if SPINDLE_SYNC_ENABLE
-    float rpm = spindleGetData(SpindleData_RPM)->rpm;
-    state.at_speed = settings.spindle.at_speed_tolerance <= 0.0f || (rpm >= spindle_data.rpm_low_limit && rpm <= spindle_data.rpm_high_limit);
+    hal.spindle.cap.at_speed = hal.spindle.get_data == spindleGetData;
 #endif
 
-    return state;
+    spindle_update_caps(hal.spindle.cap.variable ? &spindle_pwm : NULL);
+
+    return true;
 }
 
 #if PPI_ENABLE
@@ -1283,42 +1308,6 @@ static void spindlePulseOn (uint_fast16_t pulse_length)
 }
 
 #endif
-
-bool spindleConfig (void)
-{
-    if((hal.spindle.cap.variable = !settings.spindle.flags.pwm_disable && spindle_precompute_pwm_values(&spindle_pwm, F_BUS_ACTUAL / 2))) {
-#if SPINDLE_PWM_PIN == 12
-        TMR1_COMP11 = spindle_pwm.period;
-        TMR1_CMPLD11 = spindle_pwm.period;
-        if(settings.spindle.invert.pwm)
-            TMR1_SCTRL0 |= TMR_SCTRL_OPS;
-        else
-            TMR1_SCTRL0 &= ~TMR_SCTRL_OPS;
-#else // 13
-        TMR2_COMP10 = spindle_pwm.period;
-        TMR2_CMPLD10 = spindle_pwm.period;
-        if(settings.spindle.invert.pwm)
-            TMR2_SCTRL0 |= TMR_SCTRL_OPS;
-        else
-            TMR2_SCTRL0 &= ~TMR_SCTRL_OPS;
-#endif
-        hal.spindle.set_state = spindleSetStateVariable;
-    } else {
-        if(pwmEnabled)
-            hal.spindle.set_state((spindle_state_t){0}, 0.0f);
-        hal.spindle.set_state = spindleSetState;
-    }
-
-#if SPINDLE_SYNC_ENABLE
-    hal.spindle.cap.at_speed = hal.spindle.get_data == spindleGetData;
-#endif
-
-    spindle_update_caps(hal.spindle.cap.variable ? &spindle_pwm : NULL);
-
-    return true;
-}
-
-#endif // PWM_SPINDLE
 
 #if SPINDLE_SYNC_ENABLE
 
@@ -1406,7 +1395,35 @@ static void spindleDataReset (void)
 
 #endif // SPINDLE_SYNC_ENABLE
 
-// end spindle code
+#endif // SPINDLE_PWM_PIN
+
+// Returns spindle state in a spindle_state_t variable.
+// spindle_state_t is defined in grbl/spindle_control.h
+static spindle_state_t spindleGetState (void)
+{
+    spindle_state_t state = {settings.spindle.invert.mask};
+
+    state.on = (spindleEnable.reg->DR & spindleEnable.bit) != 0;
+#ifdef SPINDLE_DIRECTION_PIN
+    state.ccw = (spindleDir.reg->DR & spindleDir.bit) != 0;
+#endif
+
+    state.value ^= settings.spindle.invert.mask;
+
+#ifdef SPINDLE_PWM_PIN
+    if(pwmEnabled)
+        state.on |= pwmEnabled;
+#endif
+
+#if SPINDLE_SYNC_ENABLE
+    float rpm = spindleGetData(SpindleData_RPM)->rpm;
+    state.at_speed = settings.spindle.at_speed_tolerance <= 0.0f || (rpm >= spindle_data.rpm_low_limit && rpm <= spindle_data.rpm_high_limit);
+#endif
+
+    return state;
+}
+
+#endif // DRIVER_SPINDLE
 
 
 // Start/stop coolant (and mist if enabled).
@@ -1499,8 +1516,8 @@ static void settings_changed (settings_t *settings)
         hal.stepper.disable_motors((axes_signals_t){0}, SquaringMode_Both);
 #endif
 
-#ifdef PWM_SPINDLE
-        if(hal.spindle.get_state == spindleGetState)
+#if defined(DRIVER_SPINDLE) && defined(SPINDLE_PWM_PIN)
+        if(hal.spindle.config == spindleConfig)
             spindleConfig();
 #endif
 
@@ -2003,7 +2020,7 @@ static bool driver_setup (settings_t *settings)
 
     attachInterruptVector(IRQ_GPIO6789, gpio_isr);
 
-#ifdef PWM_SPINDLE
+#ifdef DRIVER_SPINDLE
 
    /******************
     *  Spindle init  *
@@ -2056,7 +2073,7 @@ static bool driver_setup (settings_t *settings)
 
 #endif // SPINDLE_PWM_PIN
 
-#endif // PWM_SPINDLE
+#endif // DRIVER_SPINDLE
 
 #if SPINDLE_SYNC_ENABLE
 
@@ -2109,7 +2126,7 @@ static bool driver_setup (settings_t *settings)
 
   // Set defaults
 
-    IOInitDone = settings->version == 21;
+    IOInitDone = settings->version == 22;
 
     hal.settings_changed(settings);
     hal.stepper.go_idle(true);
@@ -2282,10 +2299,15 @@ bool driver_init (void)
         options[strlen(options) - 1] = '\0';
 
     hal.info = "iMXRT1062";
-    hal.driver_version = "220927";
+    hal.driver_version = "230125";
+    hal.driver_url = GRBL_URL "/iMXRT1062";
 #ifdef BOARD_NAME
     hal.board = BOARD_NAME;
 #endif
+#ifdef BOARD_URL
+    hal.board_url = BOARD_URL;
+#endif
+
     hal.driver_options = *options == '\0' ? NULL : options;
     hal.driver_setup = driver_setup;
     hal.f_mcu = F_CPU_ACTUAL / 1000000UL;
@@ -2365,32 +2387,39 @@ bool driver_init (void)
     hal.encoder.on_event = encoder_event;
 #endif
 
-#ifdef PWM_SPINDLE
+#ifdef DRIVER_SPINDLE
 
     static const spindle_ptrs_t spindle = {
- #ifdef SPINDLE_DIRECTION_PIN
-        .cap.direction = On,
- #endif
  #ifdef SPINDLE_PWM_PIN
+        .type = SpindleType_PWM,
         .cap.laser = On,
         .cap.variable = On,
         .cap.pwm_invert = On,
- #endif
+        .config = spindleConfig,
         .get_pwm = spindleGetPWM,
         .update_pwm = spindle_set_speed,
- #if PPI_ENABLE
-        .pulse_on = spindlePulseOn;
+   #if PPI_ENABLE
+        .pulse_on = spindlePulseOn,
+   #endif
+ #else
+        .type = SpindleType_Basic,
  #endif
-        .config = spindleConfig,
+ #ifdef SPINDLE_DIRECTION_PIN
+        .cap.direction = On,
+ #endif
         .set_state = spindleSetState,
         .get_state = spindleGetState
     };
 
+ #ifdef SPINDLE_PWM_PIN
     spindle_register(&spindle, "PWM");
+ #else
+    spindle_register(&spindle, "Basic");
+ #endif
 
-#endif
+#endif // DRIVER_SPINDLE
 
-  // Driver capabilities, used for announcing and negotiating (with Grbl) driver functionality.
+  // Driver capabilities
   // See driver_cap_t union i grbl/hal.h for available flags.
 
 #if ESTOP_ENABLE
